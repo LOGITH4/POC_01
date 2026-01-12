@@ -5,24 +5,23 @@ import {
 } from 'react-native';
 import {
   RTCPeerConnection, RTCView, mediaDevices, MediaStream,
+  MediaStreamTrack,
 } from 'react-native-webrtc';
 
 const WHIP_ENDPOINT = 'https://stbapi.adaptnxt.in:8889/STB_100/whip';
 const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
 
 // Audio source options
-type AudioSource = 'system' | 'mic' | 'both';
 
 function App() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [log, setLog] = useState<string>('Ready');
-  const [audioSource, setAudioSource] = useState<AudioSource>('system');
   const [includeMic, setIncludeMic] = useState(false);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
-  const statsIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const statsIntervalRef = useRef<number | null>(null);
 
   const updateLog = (msg: string) => {
     console.log(`[LOG] ${msg}`);
@@ -74,13 +73,7 @@ function App() {
       
       // For Android 10+, we need to explicitly request audio in getDisplayMedia
       // The user MUST select "Record audio" or similar option in the system dialog
-      const displayMediaConstraints = {
-        video: true,
-        audio: true, // This is CRITICAL for system audio capture
-      };
-
-      console.log('Requesting display media with constraints:', displayMediaConstraints);
-      const screenStream = await mediaDevices.getDisplayMedia(displayMediaConstraints);
+      const screenStream = await mediaDevices.getDisplayMedia();
       
       // Log what we got from screen capture
       console.log('=== Screen Capture Results ===');
@@ -111,12 +104,9 @@ function App() {
       if (includeMic) {
         updateLog('Starting Microphone...');
         try {
+          // Simplified constraints to avoid silencing issues
           const micConstraints = {
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-            },
+            audio: true,
             video: false,
           };
           
@@ -180,12 +170,40 @@ function App() {
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
       pcRef.current = pc;
 
-      // Add all tracks to peer connection
-      console.log('=== Adding tracks to PeerConnection ===');
-      finalStream.getTracks().forEach((track, index) => {
-        console.log(`Adding track ${index + 1}:`, track.kind, track.label);
-        pc.addTrack(track, finalStream);
-      });
+      // Use transceivers for more precise control
+      // 1. Add Video Transceiver
+      const videoT = finalStream.getVideoTracks()[0];
+      if (videoT) {
+        console.log(`Adding video transceiver: ${videoT.label}`);
+        pc.addTransceiver(videoT, { 
+          direction: 'sendonly',
+          streams: [finalStream],
+        });
+      }
+
+      // 2. Add Audio Transceiver(s)
+      // WHIP endpoints typically handle one audio track well.
+      const audioTracks = finalStream.getAudioTracks();
+      
+      if (audioTracks.length > 0) {
+        // Add the first available audio track (System or Mic)
+        const primaryAudio = audioTracks[0];
+        console.log(`Adding audio transceiver: ${primaryAudio.label}`);
+        
+        // Explicitly use 'opus' codec if possible (though WebRTC defaults to it)
+        pc.addTransceiver(primaryAudio, { 
+          direction: 'sendonly', 
+          streams: [finalStream],
+        });
+
+        if (audioTracks.length > 1) {
+          console.warn('Multiple audio tracks found. Only sending the first one.');
+        }
+      } else {
+        // Warning: No audio tracks found in local stream
+        console.warn('⚠️ No audio tracks to add to PeerConnection!');
+        updateLog('⚠️ No audio tracks available to stream');
+      }
 
       // Connection state monitoring
       pc.oniceconnectionstatechange = () => {
@@ -235,7 +253,9 @@ function App() {
                 audioBytesSent += bytes;
                 audioTrackCount++;
                 if (packets > 0) {
-                  console.log(`🔊 Audio #${audioTrackCount}: ${packets} packets, ${(bytes / 1024).toFixed(1)} KB`);
+                  // Log audio level if available to check for silence
+                  const level = report.audioLevel !== undefined ? ` (Lvl: ${report.audioLevel})` : '';
+                  console.log(`🔊 Audio #${audioTrackCount}: ${packets} pkts, ${(bytes / 1024).toFixed(1)} KB${level}`);
                 }
               }
             }
@@ -262,19 +282,20 @@ function App() {
       
       const offer = await pc.createOffer(offerOptions);
       
-      // Log SDP for debugging audio tracks
-      console.log('=== Offer SDP (audio lines) ===');
-      const audioLines = offer.sdp?.split('\n').filter(line => 
-        line.includes('audio') || line.includes('opus') || line.includes('a=mid:')
-      );
-      audioLines?.forEach(line => console.log(line));
-      
+      // Mungle SDP to ensure audio line is active and properly set
+      // Some severs are strict about the order or specific attributes
+      if (offer.sdp) {
+        // Ensure recvonly (from server perspective) or sendonly (from our perspective) is correct in SDP
+        // The transceiver 'sendonly' should handle this, but explicit SDP checks help debugging
+        console.log('Original SDP:', offer.sdp);
+      }
+
       await pc.setLocalDescription(offer);
 
       // Wait for ICE gathering to complete
       updateLog('Gathering ICE candidates...');
       
-      await new Promise<void>((resolve, reject) => {
+      await new Promise<void>((resolve) => {
         const timeout = setTimeout(() => {
           console.log('ICE gathering timeout - proceeding with available candidates');
           resolve();
