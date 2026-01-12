@@ -36,6 +36,10 @@ function App() {
         PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
       ];
 
+      // Note: We deliberately do not request POST_NOTIFICATIONS to minimize user prompts.
+      // The Foreground Service will still run, but the notification might be silenced/hidden 
+      // depending on OS version, which is acceptable per user requirements.
+
       const results = await PermissionsAndroid.requestMultiple(permissions);
       
       const allGranted = Object.values(results).every(

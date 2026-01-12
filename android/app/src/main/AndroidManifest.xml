@@ -13,6 +13,7 @@
     <!-- Foreground Service for Screen Capture (Required for Android 10+) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     
     <!-- For Android 14+ notification permission -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -34,11 +35,12 @@
 
         <!-- 
             Foreground Service for Media Projection (Screen + Audio Capture)
-            This is REQUIRED for Android 10+ to capture screen and system audio
+            This is REQUIRED for Android 10+ to capture screen and system audio.
+            Added microphone type to ensure audio capture continues in background.
         -->
         <service
-            android:name="com.oney.WebRTCModule.DailyWebRTCForegroundService"
-            android:foregroundServiceType="mediaProjection"
+            android:name="com.oney.WebRTCModule.MediaProjectionService"
+            android:foregroundServiceType="mediaProjection|microphone"
             android:enabled="true"
             android:exported="false">
             <!-- Android 14+ requires special use declaration -->
