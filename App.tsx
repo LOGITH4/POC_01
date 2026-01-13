@@ -18,7 +18,7 @@ function App() {
   const [isConnecting, setIsConnecting] = useState(false);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
   const [log, setLog] = useState<string>('Ready');
-  const [includeMic, setIncludeMic] = useState(false);
+  const [includeMic, setIncludeMic] = useState(true);
 
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const statsIntervalRef = useRef<number | null>(null);
@@ -35,6 +35,12 @@ function App() {
       const permissions = [
         PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
       ];
+
+      // Request notification permission on Android 13+ (API 33+)
+      // This is required for the foreground service to run reliably
+      if (Platform.OS === 'android' && Platform.Version >= 33) {
+        permissions.push(PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS);
+      }
 
       // Note: We deliberately do not request POST_NOTIFICATIONS to minimize user prompts.
       // The Foreground Service will still run, but the notification might be silenced/hidden 
@@ -77,7 +83,9 @@ function App() {
       
       // For Android 10+, we need to explicitly request audio in getDisplayMedia
       // The user MUST select "Record audio" or similar option in the system dialog
-      const screenStream = await mediaDevices.getDisplayMedia();
+      // NOTE: Current react-native-webrtc on Android ignores constraints for getDisplayMedia and ONLY captures video.
+      // To get audio, we must rely on the microphone capture (micTrack) below to pick up the speaker output.
+      const screenStream = await mediaDevices.getDisplayMedia({ video: true, audio: true });
       
       // Log what we got from screen capture
       console.log('=== Screen Capture Results ===');
@@ -109,8 +117,17 @@ function App() {
         updateLog('Starting Microphone...');
         try {
           // Simplified constraints to avoid silencing issues
+          // We disable echo cancellation/noise suppression to allow the mic to pick up system audio playing from speakers
           const micConstraints = {
-            audio: true,
+            audio: {
+              echoCancellation: false,
+              autoGainControl: false,
+              noiseSuppression: false,
+              googEchoCancellation: false,
+              googAutoGainControl: false,
+              googNoiseSuppression: false,
+              googHighpassFilter: false,
+            },
             video: false,
           };
           
